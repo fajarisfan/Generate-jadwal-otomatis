@@ -162,11 +162,23 @@ def main():
         staff_order = st.session_state["staff_order"]
         dim = st.session_state["days_in_month"]
 
+        # Pastikan semua staff_order ada di schedule (jika ada yang hilang, isi kosong)
+        for name in staff_order:
+            if name not in schedule:
+                schedule[name] = [""] * dim
+
         display_df = pd.DataFrame(
             {str(d): [schedule[n][d - 1] for n in staff_order] for d in range(1, dim + 1)},
             index=staff_order,
         )
-        st.dataframe(display_df.style.applymap(style_cell), use_container_width=True)
+
+        # Gunakan map (pandas >= 2.1) atau applymap (fallback)
+        try:
+            styled = display_df.style.map(style_cell)
+        except AttributeError:
+            styled = display_df.style.applymap(style_cell)
+
+        st.dataframe(styled, use_container_width=True)
 
         with st.expander("Cek keadilan pembagian shift (Rotasi)"):
             counts = st.session_state["counts"]
