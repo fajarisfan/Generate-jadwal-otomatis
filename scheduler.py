@@ -1,9 +1,3 @@
-"""
-Logika generate jadwal jaga SIRS - RSUD Kota Cilegon
-- Staf "PS Tetap"  -> pola 5 hari kerja (PS) lalu 2 hari libur (L), mengikuti kalender (Senin-Jumat kerja).
-- Staf "Rotasi"    -> gantian Pagi(1)/Siang(2)/Malam(2) per hari, adil. Setelah Malam wajib libur 2 hari.
-                     Usahakan setiap staf mendapat 5 hari kerja dan 2 hari libur dalam seminggu.
-"""
 import calendar
 from datetime import date
 
@@ -47,14 +41,14 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None):
     need = need or {"P": 1, "S": 2, "M": 2}
     counts = {n: {"P": 0, "S": 0, "M": 0, "L": 0} for n in names}
     schedule = {n: [""] * days_in_month for n in names}
-    last_shift = {n: None for n in names}      # shift kemarin
-    last_malam_date = {n: -10 for n in names}  # tanggal terakhir malam
+    last_shift = {n: None for n in names}
+    last_malam_date = {n: -10 for n in names}
 
     for day in range(1, days_in_month + 1):
         idx = day - 1
         cuti_today = {n for n in names if day in cuti_by_day.get(n, set())}
         
-        # Tentukan forced rest (2 hari setelah malam)
+        # Staf yang wajib libur karena malam 1-2 hari lalu
         forced_rest = set()
         for n in names:
             if n in cuti_today:
@@ -62,7 +56,6 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None):
             if day - last_malam_date[n] in (1, 2):
                 forced_rest.add(n)
         
-        # Staf yang tersedia untuk shift
         available = [n for n in names if n not in cuti_today and n not in forced_rest]
         
         # Assign cuti dan forced rest
@@ -73,18 +66,26 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None):
             counts[n]["L"] += 1
             last_shift[n] = "L"
         
-        # Untuk setiap shift, pilih staf dengan kriteria adil dan hindari urutan tidak wajar
         assigned_today = set()
+        # Urutan shift: Pagi, Siang, Malam
         for shift in ("P", "S", "M"):
             for _ in range(need.get(shift, 0)):
                 candidates = [n for n in available if n not in assigned_today]
                 if not candidates:
                     break
-                # Skor: (total_shift, count_shift_ini, penalty_sama_dengan_kemarin)
+                # Fungsi penalti untuk menghindari urutan tidak wajar
+                def penalty(n):
+                    prev = last_shift[n]
+                    if prev == "S" and shift == "P":
+                        return 1   # Siang -> Pagi tidak boleh
+                    elif prev == "M" and shift == "P":
+                        return 1   # Malam -> Pagi tidak boleh (tapi biasanya sudah forced rest)
+                    else:
+                        return 0
                 candidates.sort(key=lambda x: (
                     counts[x]["P"] + counts[x]["S"] + counts[x]["M"],  # total kerja paling sedikit
                     counts[x][shift],                                  # shift ini paling jarang
-                    0 if last_shift[x] != shift else 1                # hindari shift sama
+                    penalty(x),                                        # hindari urutan jelek
                 ))
                 chosen = candidates[0]
                 schedule[chosen][idx] = shift
