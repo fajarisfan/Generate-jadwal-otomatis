@@ -41,7 +41,9 @@ def check_pin():
 
 
 def style_cell(val):
-    return f"background-color: {COLOR_MAP.get(val, '#FFFFFF')}"
+    # warna latar dari COLOR_MAP, teks hitam agar terbaca
+    bg = COLOR_MAP.get(val, "#FFFFFF")
+    return f"background-color: {bg}; color: black;"
 
 
 def main():
