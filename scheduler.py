@@ -2,7 +2,7 @@
 Logika generate jadwal jaga SIRS - RSUD Kota Cilegon
 - Staf "PS Tetap"  -> pola 5 hari kerja (PS) lalu 2 hari libur (L), mengikuti kalender (Senin-Jumat kerja).
 - Staf "Rotasi"    -> gantian Pagi(1org)/Siang(2org)/Malam(2org) per hari, adil berdasar hitungan
-                      paling sedikit kebagian shift itu. Setelah Malam wajib libur (rest) besoknya.
+                      paling sedikit kebagian shift itu. Setelah Malam wajib libur 2 hari (Lepas Malam + 1 hari libur tambahan).
 """
 import calendar
 from datetime import date
@@ -56,18 +56,27 @@ def generate_ps_tetap(names, year, month, days_in_month, cuti_by_day):
 def generate_rotasi(names, days_in_month, cuti_by_day, need=None):
     """
     Rotasi adil: tiap hari butuh Pagi=1, Siang=2, Malam=2 (default).
-    Sisa orang di pool -> Libur. Yang habis Malam WAJIB libur besoknya.
+    Sisa orang di pool -> Libur.
+    Yang habis Malam WAJIB libur 2 hari (hari berikutnya dan hari berikutnya lagi).
     Pemilihan orang per shift pakai orang yang PALING JARANG kebagian shift itu (dan total shift).
     """
     need = need or {"P": 1, "S": 2, "M": 2}
     counts = {n: {"P": 0, "S": 0, "M": 0, "L": 0} for n in names}
     schedule = {n: [""] * days_in_month for n in names}
-    last_malam = set()  # staf yang jaga Malam hari sebelumnya
+    # Catat tanggal terakhir staf mendapat shift Malam
+    last_malam_date = {n: -10 for n in names}  # nilai awal cukup kecil
 
     for day in range(1, days_in_month + 1):
         idx = day - 1
         cuti_today = {n for n in names if day in cuti_by_day.get(n, set())}
-        forced_rest = {n for n in last_malam if n not in cuti_today}
+        # Staf yang harus libur karena malam pada 1 atau 2 hari sebelumnya
+        forced_rest = set()
+        for n in names:
+            if n in cuti_today:
+                continue
+            if day - last_malam_date[n] in (1, 2):  # 1 hari setelah malam (lepas) atau 2 hari setelah
+                forced_rest.add(n)
+
         available = [n for n in names if n not in cuti_today and n not in forced_rest]
 
         # Assign cuti dan forced rest
@@ -78,6 +87,7 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None):
             counts[n]["L"] += 1
 
         assigned_today = set()
+        # Urutan shift: Pagi, Siang, Malam
         for shift in ("P", "S", "M"):
             for _ in range(need.get(shift, 0)):
                 candidates = [n for n in available if n not in assigned_today]
@@ -91,15 +101,15 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None):
                 schedule[chosen][idx] = shift
                 counts[chosen][shift] += 1
                 assigned_today.add(chosen)
+                # Jika shift yang diberikan adalah Malam, catat tanggalnya
+                if shift == "M":
+                    last_malam_date[chosen] = day
 
         # Sisanya libur
         for n in available:
             if n not in assigned_today:
                 schedule[n][idx] = "L"
                 counts[n]["L"] += 1
-
-        # Update last_malam untuk hari berikutnya
-        last_malam = {n for n in names if schedule[n][idx] == "M"}
 
     return schedule, counts
 
