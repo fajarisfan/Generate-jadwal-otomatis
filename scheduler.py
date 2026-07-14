@@ -161,17 +161,28 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None, carry_state=No
                     state[chosen]["same_tier_streak"] = 1
                 state[chosen]["tier"] = new_tier
                 state[chosen]["streak"] += 1
-                if shift == "M":
-                    state[chosen]["rest_left"] = REST_AFTER_MALAM
+                # rest_left BELUM di-set di sini. Malam boleh diambil 2 hari
+                # berturut-turut (same_tier_streak < MAX_SAME_TIER_STREAK
+                # masih ngizinin). Libur wajib baru dipicu pas rangkaian
+                # Malam-nya beneran selesai (lihat blok di bawah).
 
-        # sisanya (available tapi gak kebagian shift) -> libur, streak reset
+        # sisanya (available tapi gak kebagian shift) -> libur
         for n in available:
             if n not in assigned_today:
                 schedule[n][idx] = "L"
                 counts[n]["L"] += 1
-                state[n]["streak"] = 0
-                state[n]["tier"] = None
-                state[n]["same_tier_streak"] = 0
+                if state[n]["tier"] == TIER["M"]:
+                    # rangkaian Malam-nya baru aja kelar (1x atau 2x Malam).
+                    # Hari ini adalah libur PERTAMA dari 2 hari wajib.
+                    state[n]["rest_left"] = REST_AFTER_MALAM - 1
+                    if state[n]["rest_left"] <= 0:
+                        state[n]["streak"] = 0
+                        state[n]["tier"] = None
+                        state[n]["same_tier_streak"] = 0
+                else:
+                    state[n]["streak"] = 0
+                    state[n]["tier"] = None
+                    state[n]["same_tier_streak"] = 0
 
     end_state = {n: dict(state[n]) for n in names}
     return schedule, counts, end_state
