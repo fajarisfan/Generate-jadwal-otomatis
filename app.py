@@ -120,6 +120,15 @@ def main():
     with c3:
         n_malam = st.number_input("Malam", min_value=1, max_value=5, value=2)
 
+    lanjutkan = False
+    if "carry_state" in st.session_state:
+        prev_label = st.session_state.get("carry_state_label", "bulan sebelumnya")
+        lanjutkan = st.checkbox(
+            f"Lanjutkan progresi shift dari hasil generate {prev_label} "
+            "(biar gak ada yang tiba-tiba balik ke Pagi padahal terakhir Siang/Malam)",
+            value=True,
+        )
+
     if st.button("🔀 Generate Jadwal", type="primary"):
         cuti_by_day = {}
         for _, r in cuti_df.iterrows():
@@ -143,12 +152,14 @@ def main():
             st.stop()
 
         need = {"P": n_pagi, "S": n_siang, "M": n_malam}
-        schedule, dim, counts = build_full_schedule(
+        carry_state = st.session_state.get("carry_state") if lanjutkan else None
+        schedule, dim, counts, end_state = build_full_schedule(
             int(tahun), bulan,
             ps_tetap_bulan,
             rotasi_bulan,
             cuti_by_day,
-            need=need
+            need=need,
+            carry_state=carry_state,
         )
         staff_order = staff_df["nama"].tolist()
         st.session_state["schedule"] = schedule
@@ -157,6 +168,9 @@ def main():
         st.session_state["counts"] = counts
         st.session_state["gen_year"] = int(tahun)
         st.session_state["gen_month"] = bulan
+        # simpan state akhir buat dipakai nyambung ke generate bulan berikutnya
+        st.session_state["carry_state"] = end_state
+        st.session_state["carry_state_label"] = f"{BULAN_ID[bulan]} {int(tahun)}"
 
     if "schedule" in st.session_state:
         st.subheader("Hasil Jadwal")
