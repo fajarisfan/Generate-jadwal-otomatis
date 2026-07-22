@@ -59,11 +59,9 @@ LIBUR_NASIONAL = {
 }
 
 def is_weekend(day, month, year):
-    """Cek apakah hari Sabtu atau Minggu"""
     return date(year, month, day).weekday() in [5, 6]
 
 def is_holiday(day, month, year):
-    """Cek apakah hari libur (Minggu atau tanggal merah)"""
     if is_weekend(day, month, year):
         return True
     key = f"{day:02d}-{month:02d}"
@@ -73,7 +71,6 @@ def is_holiday(day, month, year):
     return False
 
 def get_holiday_name(day, month, year):
-    """Dapatkan nama hari libur jika ada"""
     if is_weekend(day, month, year):
         return "Hari Minggu"
     key = f"{day:02d}-{month:02d}"
@@ -88,7 +85,7 @@ def generate_ps_tetap(names, year, month, days_in_month, cuti_by_day):
             if day in cuti_by_day.get(name, set()):
                 seq.append("C")
             elif is_holiday(day, month, year):
-                seq.append("L")  # PS Tetap libur di hari Minggu/tanggal merah
+                seq.append("L")
             else:
                 seq.append("PS")
         schedule[name] = seq
@@ -100,11 +97,22 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None, last_month_shi
     schedule = {n: [""] * days_in_month for n in names}
     last_shift = {n: last_month_shift.get(n, None) if last_month_shift else None for n in names}
     last_malam_date = {n: -10 for n in names}
-
+    
+    # Pola 6 hari kerja: P-P-P-S-S-M, lalu - (Lepas Malam), lalu L (Libur)
+    # Urutan shift yang ideal: P, P, P, S, S, M, -, L, P, P, P, S, S, M, -, L, ...
+    SHIFT_SEQUENCE = ["P", "P", "P", "S", "S", "M", "-", "L"]
+    
+    # Inisialisasi posisi awal berdasarkan shift terakhir bulan lalu
+    for name in names:
+        if last_shift[name] is None:
+            # Mulai dari P jika tidak ada data sebelumnya
+            last_shift[name] = "L"  # Agar mulai dari P
+    
     for day in range(1, days_in_month + 1):
         idx = day - 1
         cuti_today = {n for n in names if day in cuti_by_day.get(n, set())}
         forced_rest = set()
+        
         for n in names:
             if n in cuti_today:
                 continue
@@ -136,16 +144,34 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None, last_month_shi
                     specific = counts[n][shift]
                     penalty = 0
                     
+                    # Penalti untuk urutan tidak wajar
                     if prev == shift:
                         penalty += 100
                     if prev == "S" and shift == "P":
                         penalty += 50
                     if prev == "-" and shift == "P":
                         penalty += 50
+                    if prev == "M" and shift == "P":
+                        penalty += 50
                     if prev == "-" and shift == "S":
                         penalty += 30
                     if prev == "P" and shift == "M":
                         penalty += 20
+                    if prev == "M" and shift == "S":
+                        penalty += 20
+                    if prev == "L" and shift == "P":
+                        penalty += 0  # L -> P diperbolehkan
+                    if prev == "L" and shift == "S":
+                        penalty += 10
+                    if prev == "L" and shift == "M":
+                        penalty += 20
+                    if prev == "P" and shift == "P":
+                        penalty += 10  # P-P diperbolehkan tapi sedikit penalti
+                    if prev == "S" and shift == "S":
+                        penalty += 10  # S-S diperbolehkan tapi sedikit penalti
+                    
+                    # Prioritaskan staf yang sudah mengikuti pola 6 kerja 1 libur
+                    # Total kerja di atas rata-rata akan mendapat penalti
                     
                     return (total_kerja, specific, penalty)
                 
