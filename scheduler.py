@@ -93,21 +93,27 @@ def generate_ps_tetap(names, year, month, days_in_month, cuti_by_day):
 
 def generate_rotasi(names, days_in_month, cuti_by_day, need=None, last_month_shift=None):
     need = need or {"P": 1, "S": 2, "M": 2}
-    counts = {n: {"P": 0, "S": 0, "M": 0, "L": 0} for n in names}
+    
+    # Hitung total shift yang dibutuhkan per bulan
+    total_hari = days_in_month
+    total_shift_per_hari = sum(need.values())
+    total_shift_bulan = total_hari * total_shift_per_hari
+    total_staf = len(names)
+    
+    # Target ideal per staf
+    target_per_staf = total_shift_bulan / total_staf
+    target_P = (need["P"] * total_hari) / total_staf
+    target_S = (need["S"] * total_hari) / total_staf
+    target_M = (need["M"] * total_hari) / total_staf
+    
+    counts = {n: {"P": 0, "S": 0, "M": 0, "L": 0, "total": 0} for n in names}
     schedule = {n: [""] * days_in_month for n in names}
     last_shift = {n: last_month_shift.get(n, None) if last_month_shift else None for n in names}
     last_malam_date = {n: -10 for n in names}
+    available_pool = names.copy()
     
-    # Pola 6 hari kerja: P-P-P-S-S-M, lalu - (Lepas Malam), lalu L (Libur)
-    # Urutan shift yang ideal: P, P, P, S, S, M, -, L, P, P, P, S, S, M, -, L, ...
-    SHIFT_SEQUENCE = ["P", "P", "P", "S", "S", "M", "-", "L"]
-    
-    # Inisialisasi posisi awal berdasarkan shift terakhir bulan lalu
-    for name in names:
-        if last_shift[name] is None:
-            # Mulai dari P jika tidak ada data sebelumnya
-            last_shift[name] = "L"  # Agar mulai dari P
-    
+    # Urutan prioritas untuk memastikan semua staf dapat shift
+    # Buat rotasi berdasarkan jumlah shift yang sudah didapat
     for day in range(1, days_in_month + 1):
         idx = day - 1
         cuti_today = {n for n in names if day in cuti_by_day.get(n, set())}
@@ -122,17 +128,24 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None, last_month_shi
         
         available = [n for n in names if n not in cuti_today and n not in forced_rest]
 
+        # Assign cuti dan forced rest
         for n in cuti_today:
             schedule[n][idx] = "C"
             last_shift[n] = "C"
         for n in forced_rest:
             schedule[n][idx] = "-"  # Lepas Malam
             counts[n]["L"] += 1
+            counts[n]["total"] += 1
             last_shift[n] = "-"
 
         assigned_today = set()
         
-        for shift in ("P", "S", "M"):
+        # Urutan shift: Malam dulu (karena paling berat), lalu Siang, lalu Pagi
+        shift_order = ["M", "S", "P"]  # Prioritaskan yang paling berat dulu
+        
+        for shift in shift_order:
+            if shift not in need:
+                continue
             for _ in range(need.get(shift, 0)):
                 candidates = [n for n in available if n not in assigned_today]
                 if not candidates:
@@ -140,45 +153,53 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None, last_month_shi
                 
                 def score(n):
                     prev = last_shift[n]
-                    total_kerja = counts[n]["P"] + counts[n]["S"] + counts[n]["M"]
-                    specific = counts[n][shift]
-                    penalty = 0
                     
-                    # Penalti untuk urutan tidak wajar
+                    # Hitung skor berdasarkan:
+                    # 1. Total shift paling sedikit (prioritas utama)
+                    total_kerja = counts[n]["total"]
+                    
+                    # 2. Shift spesifik paling sedikit
+                    specific = counts[n][shift]
+                    
+                    # 3. Penalti urutan
+                    penalty = 0
                     if prev == shift:
                         penalty += 100
                     if prev == "S" and shift == "P":
                         penalty += 50
-                    if prev == "-" and shift == "P":
-                        penalty += 50
                     if prev == "M" and shift == "P":
                         penalty += 50
-                    if prev == "-" and shift == "S":
+                    if prev == "M" and shift == "S":
                         penalty += 30
                     if prev == "P" and shift == "M":
                         penalty += 20
-                    if prev == "M" and shift == "S":
-                        penalty += 20
-                    if prev == "L" and shift == "P":
-                        penalty += 0  # L -> P diperbolehkan
-                    if prev == "L" and shift == "S":
-                        penalty += 10
                     if prev == "L" and shift == "M":
-                        penalty += 20
-                    if prev == "P" and shift == "P":
-                        penalty += 10  # P-P diperbolehkan tapi sedikit penalti
-                    if prev == "S" and shift == "S":
-                        penalty += 10  # S-S diperbolehkan tapi sedikit penalti
+                        penalty += 30
+                    if prev == "-" and shift == "P":
+                        penalty += 50
+                    if prev == "-" and shift == "S":
+                        penalty += 30
                     
-                    # Prioritaskan staf yang sudah mengikuti pola 6 kerja 1 libur
-                    # Total kerja di atas rata-rata akan mendapat penalti
+                    # 4. Faktor keadilan: prioritas staf yang total shiftnya masih di bawah target
+                    fairness = 0
+                    if total_kerja < target_per_staf:
+                        fairness = -10  # Bonus untuk yang masih di bawah target
                     
-                    return (total_kerja, specific, penalty)
+                    # 5. Faktor shift spesifik: prioritas yang masih di bawah target shift tersebut
+                    if shift == "P" and counts[n]["P"] < target_P:
+                        fairness -= 5
+                    if shift == "S" and counts[n]["S"] < target_S:
+                        fairness -= 5
+                    if shift == "M" and counts[n]["M"] < target_M:
+                        fairness -= 5
+                    
+                    return (total_kerja + penalty + fairness, specific)
                 
                 candidates.sort(key=score)
                 chosen = candidates[0]
                 schedule[chosen][idx] = shift
                 counts[chosen][shift] += 1
+                counts[chosen]["total"] += 1
                 assigned_today.add(chosen)
                 last_shift[chosen] = shift
                 if shift == "M":
@@ -189,6 +210,7 @@ def generate_rotasi(names, days_in_month, cuti_by_day, need=None, last_month_shi
             if n not in assigned_today:
                 schedule[n][idx] = "L"
                 counts[n]["L"] += 1
+                counts[n]["total"] += 1
                 last_shift[n] = "L"
 
     return schedule, counts, last_shift
