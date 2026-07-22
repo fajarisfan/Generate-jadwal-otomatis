@@ -1,10 +1,12 @@
 import calendar
 from datetime import date
+import json
+import os
 
 import pandas as pd
 import streamlit as st
 
-from scheduler import build_full_schedule, SHIFT_LEGEND, SHIFT_COLORS
+from scheduler import build_full_schedule, SHIFT_LEGEND, SHIFT_COLORS, is_holiday, get_holiday_name
 from pdf_export import export_jadwal_pdf, BULAN_ID
 
 st.set_page_config(page_title="Generator Jadwal Jaga SIRS", page_icon="🗓️", layout="wide")
@@ -25,7 +27,6 @@ DEFAULT_STAFF = [
 
 COLOR_MAP = SHIFT_COLORS
 
-
 def check_pin():
     if st.session_state.get("authed"):
         return True
@@ -39,12 +40,28 @@ def check_pin():
             st.error("PIN salah.")
     return False
 
-
-def style_cell(val):
-    # warna latar dari COLOR_MAP, teks hitam agar terbaca
+def style_cell(val, day=None, month=None, year=None):
     bg = COLOR_MAP.get(val, "#FFFFFF")
+    if day and month and year and is_holiday(day, month, year):
+        return f"background-color: #FF6B6B; color: white; font-weight: bold;"
     return f"background-color: {bg}; color: black;"
 
+def save_last_shift(last_shift, year, month):
+    data = {
+        "year": year,
+        "month": month,
+        "last_shift": last_shift
+    }
+    with open("last_shift.json", "w") as f:
+        json.dump(data, f)
+
+def load_last_shift(year, month):
+    if os.path.exists("last_shift.json"):
+        with open("last_shift.json", "r") as f:
+            data = json.load(f)
+        if data.get("year") == year and data.get("month") == month - 1:
+            return data.get("last_shift", {})
+    return {}
 
 def main():
     if not check_pin():
@@ -63,7 +80,6 @@ def main():
     days_in_month = calendar.monthrange(int(tahun), bulan)[1]
 
     st.subheader("1. Data Staf")
-    st.caption("Tipe **PS Tetap** = kerja Pagi-Siang non-shift terus (kayak Kepala Unit, Rey, Hisyam). Tipe **Rotasi** = gantian Pagi/Siang/Malam.")
     if "staff_df" not in st.session_state:
         st.session_state["staff_df"] = pd.DataFrame(DEFAULT_STAFF)
 
@@ -79,7 +95,6 @@ def main():
     st.session_state["staff_df"] = staff_df
 
     st.subheader("2. Cuti (opsional)")
-    st.caption("Tambah baris kalau ada staf yang cuti di tanggal tertentu bulan ini.")
     if "cuti_df" not in st.session_state:
         st.session_state["cuti_df"] = pd.DataFrame(columns=["nama", "tanggal_mulai", "tanggal_selesai"])
 
@@ -97,9 +112,7 @@ def main():
     )
     st.session_state["cuti_df"] = cuti_df
 
-    # --- FITUR BARU: PILIH STAF ROTASI YANG NON-SHIFT ---
     st.subheader("2b. Staf Rotasi yang Non-Shift Bulan Ini")
-    st.caption("Pilih staf Rotasi yang TIDAK ikut shift (misal libur dinas atau giliran non-shift). Mereka akan dijadwalkan seperti PS Tetap (masuk Senin–Jumat, libur akhir pekan).")
     rotasi_staff = staff_df[staff_df["tipe"] == "Rotasi"]["nama"].tolist()
     if "non_shift_rotasi" not in st.session_state:
         st.session_state["non_shift_rotasi"] = []
@@ -109,7 +122,6 @@ def main():
         default=st.session_state["non_shift_rotasi"],
     )
     st.session_state["non_shift_rotasi"] = non_shift_rotasi
-    # --------------------------------------------------
 
     st.subheader("3. Kebutuhan Petugas per Shift")
     c1, c2, c3 = st.columns(3)
@@ -120,14 +132,18 @@ def main():
     with c3:
         n_malam = st.number_input("Malam", min_value=1, max_value=5, value=2)
 
-    lanjutkan = False
-    if "carry_state" in st.session_state:
-        prev_label = st.session_state.get("carry_state_label", "bulan sebelumnya")
-        lanjutkan = st.checkbox(
-            f"Lanjutkan progresi shift dari hasil generate {prev_label} "
-            "(biar gak ada yang tiba-tiba balik ke Pagi padahal terakhir Siang/Malam)",
-            value=True,
-        )
+    with st.expander("📅 Lihat Tanggal Merah Bulan Ini"):
+        st.write(f"**Hari Libur Nasional dan Minggu di {BULAN_ID[bulan]} {tahun}:**")
+        libur_list = []
+        for day in range(1, days_in_month + 1):
+            if is_holiday(day, bulan, tahun):
+                nama_libur = get_holiday_name(day, bulan, tahun)
+                libur_list.append(f"{day:02d} {BULAN_ID[bulan]} {tahun}: {nama_libur}")
+        if libur_list:
+            for item in libur_list:
+                st.write(f"🔴 {item}")
+        else:
+            st.write("Tidak ada tanggal merah di bulan ini.")
 
     if st.button("🔀 Generate Jadwal", type="primary"):
         cuti_by_day = {}
@@ -140,27 +156,28 @@ def main():
         staff_ps_tetap = staff_df[staff_df["tipe"] == "PS Tetap"]["nama"].tolist()
         staff_rotasi = staff_df[staff_df["tipe"] == "Rotasi"]["nama"].tolist()
         non_shift = st.session_state.get("non_shift_rotasi", [])
-
-        # Gabungkan non-shift ke PS Tetap untuk bulan ini
         ps_tetap_bulan = staff_ps_tetap + non_shift
         rotasi_bulan = [n for n in staff_rotasi if n not in non_shift]
 
-        # Validasi kecukupan jumlah staf shift
         need_total = n_pagi + n_siang + n_malam
         if len(rotasi_bulan) < need_total:
             st.error(f"Staf Rotasi tersisa {len(rotasi_bulan)} orang, tetapi kebutuhan per hari {need_total} orang. Kurangi yang non-shift atau tambah kebutuhan.")
             st.stop()
 
+        last_month_shift = load_last_shift(int(tahun), bulan)
+
         need = {"P": n_pagi, "S": n_siang, "M": n_malam}
-        carry_state = st.session_state.get("carry_state") if lanjutkan else None
-        schedule, dim, counts, end_state = build_full_schedule(
+        schedule, dim, counts, last_shift = build_full_schedule(
             int(tahun), bulan,
             ps_tetap_bulan,
             rotasi_bulan,
             cuti_by_day,
             need=need,
-            carry_state=carry_state,
+            last_month_shift=last_month_shift
         )
+        
+        save_last_shift(last_shift, int(tahun), bulan)
+        
         staff_order = staff_df["nama"].tolist()
         st.session_state["schedule"] = schedule
         st.session_state["staff_order"] = staff_order
@@ -168,33 +185,35 @@ def main():
         st.session_state["counts"] = counts
         st.session_state["gen_year"] = int(tahun)
         st.session_state["gen_month"] = bulan
-        # simpan state akhir buat dipakai nyambung ke generate bulan berikutnya
-        st.session_state["carry_state"] = end_state
-        st.session_state["carry_state_label"] = f"{BULAN_ID[bulan]} {int(tahun)}"
 
     if "schedule" in st.session_state:
         st.subheader("Hasil Jadwal")
         schedule = st.session_state["schedule"]
         staff_order = st.session_state["staff_order"]
         dim = st.session_state["days_in_month"]
+        year = st.session_state["gen_year"]
+        month = st.session_state["gen_month"]
 
-        # Pastikan semua staff_order ada di schedule (jika ada yang hilang, isi kosong)
         for name in staff_order:
             if name not in schedule:
                 schedule[name] = [""] * dim
 
         display_df = pd.DataFrame(
-            {str(d): [schedule[n][d - 1] for n in staff_order] for d in range(1, dim + 1)},
+            {str(d): [schedule[n][d-1] for n in staff_order] for d in range(1, dim+1)},
             index=staff_order,
         )
-
-        # Gunakan map (pandas >= 2.1) atau applymap (fallback)
-        try:
-            styled = display_df.style.map(style_cell)
-        except AttributeError:
-            styled = display_df.style.applymap(style_cell)
-
+        
+        def style_with_holiday(val, day_idx):
+            day = day_idx + 1
+            if is_holiday(day, month, year):
+                return f"background-color: #FF6B6B; color: white; font-weight: bold;"
+            bg = COLOR_MAP.get(val, "#FFFFFF")
+            return f"background-color: {bg}; color: black;"
+        
+        styled = display_df.style.apply(lambda x: [style_with_holiday(v, i) for i, v in enumerate(x)], axis=1)
+        
         st.dataframe(styled, use_container_width=True)
+        st.caption("🔴 **Merah** = Hari Minggu / Tanggal Merah (Libur)")
 
         with st.expander("Cek keadilan pembagian shift (Rotasi)"):
             counts = st.session_state["counts"]
@@ -217,7 +236,6 @@ def main():
     with st.expander("Keterangan kode shift"):
         for code, desc in SHIFT_LEGEND.items():
             st.write(f"**{code}** : {desc}")
-
 
 if __name__ == "__main__":
     main()
