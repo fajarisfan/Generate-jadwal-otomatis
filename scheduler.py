@@ -1,6 +1,17 @@
 import calendar
 from datetime import date, datetime
 
+__all__ = [
+    'build_full_schedule',
+    'SHIFT_LEGEND',
+    'SHIFT_COLORS',
+    'is_holiday',
+    'get_holiday_name',
+    'is_weekend',
+    'LIBUR_NASIONAL',
+    'LIBUR_NASIONAL_2026'
+]
+
 SHIFT_LEGEND = {
     "PS": "Pagi Siang (5 hari kerja)",
     "P": "Pagi",
@@ -48,9 +59,11 @@ LIBUR_NASIONAL = {
 }
 
 def is_weekend(day, month, year):
+    """Cek apakah hari Sabtu atau Minggu"""
     return date(year, month, day).weekday() in [5, 6]
 
 def is_holiday(day, month, year):
+    """Cek apakah hari libur (Minggu atau tanggal merah)"""
     if is_weekend(day, month, year):
         return True
     key = f"{day:02d}-{month:02d}"
@@ -60,6 +73,7 @@ def is_holiday(day, month, year):
     return False
 
 def get_holiday_name(day, month, year):
+    """Dapatkan nama hari libur jika ada"""
     if is_weekend(day, month, year):
         return "Hari Minggu"
     key = f"{day:02d}-{month:02d}"
