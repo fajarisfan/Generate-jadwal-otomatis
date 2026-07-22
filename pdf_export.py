@@ -9,13 +9,12 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 
-from scheduler import SHIFT_COLORS
+from scheduler import SHIFT_COLORS, is_holiday, get_holiday_name
 
 BULAN_ID = [
     "", "JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI",
     "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER",
 ]
-
 
 def export_jadwal_pdf(year, month, staff_order, schedule, days_in_month,
                        kepala_unit_nama="ISTIQOMAH, S.Kom",
@@ -63,23 +62,42 @@ def export_jadwal_pdf(year, month, staff_order, schedule, days_in_month,
         ("TOPPADDING", (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
     ]
-    # warnain tiap cell shift sesuai kodenya (baris 1 dst, kolom 2 dst = kolom hari)
+    
     for r, name in enumerate(staff_order, start=1):
         for c, code in enumerate(schedule[name], start=2):
-            hexcolor = SHIFT_COLORS.get(code, "#FFFFFF")
-            style.append(("BACKGROUND", (c, r), (c, r), colors.HexColor(hexcolor)))
+            day = c - 1
+            if is_holiday(day, month, year):
+                style.append(("BACKGROUND", (c, r), (c, r), colors.HexColor("#FF6B6B")))
+                style.append(("TEXTCOLOR", (c, r), (c, r), colors.white))
+            else:
+                hexcolor = SHIFT_COLORS.get(code, "#FFFFFF")
+                style.append(("BACKGROUND", (c, r), (c, r), colors.HexColor(hexcolor)))
 
     tbl.setStyle(TableStyle(style))
     story.append(tbl)
     story.append(Spacer(1, 8))
 
+    holiday_list = []
+    for day in range(1, days_in_month + 1):
+        if is_holiday(day, month, year):
+            nama_libur = get_holiday_name(day, month, year)
+            holiday_list.append(f"{day} {BULAN_ID[month]}: {nama_libur}")
+    
+    if holiday_list:
+        story.append(Paragraph("Tanggal Merah / Libur bulan ini:", small))
+        for h in holiday_list:
+            story.append(Paragraph(f"• {h}", small))
+        story.append(Spacer(1, 4))
+
     legend_lines = [
         "Keterangan:",
-        "PS : Pagi Siang ( 5 hari kerja )&nbsp;&nbsp;&nbsp;&nbsp; P : Pagi&nbsp;&nbsp;&nbsp;&nbsp; S : Siang&nbsp;&nbsp;&nbsp;&nbsp; M : Malam&nbsp;&nbsp;&nbsp;&nbsp; C : Cuti&nbsp;&nbsp;&nbsp;&nbsp; - / L : Lepas Malam / Libur",
+        "PS : Pagi Siang ( 5 hari kerja )&nbsp;&nbsp;&nbsp;&nbsp; P : Pagi&nbsp;&nbsp;&nbsp;&nbsp; S : Siang&nbsp;&nbsp;&nbsp;&nbsp; M : Malam&nbsp;&nbsp;&nbsp;&nbsp; C : Cuti&nbsp;&nbsp;&nbsp;&nbsp; - : Lepas Malam&nbsp;&nbsp;&nbsp;&nbsp; L : Libur",
         "Jam 08.00 WIB s/d 15.00 WIB",
         "Jam 15.00 WIB s/d 22.00 WIB",
         "Jam 22.00 WIB s/d 08.00 WIB",
         "Jam 08.00 WIB s/d 16.30 WIB",
+        "",
+        "🔴 Kotak merah = Hari Minggu / Tanggal Merah (Libur Nasional)",
     ]
     for line in legend_lines:
         story.append(Paragraph(line, small))
